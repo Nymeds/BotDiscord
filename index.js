@@ -1,4 +1,11 @@
-const { Client, GatewayIntentBits, Partials, SlashCommandBuilder } = require('discord.js');
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  SlashCommandBuilder,
+  ApplicationIntegrationType,
+  InteractionContextType,
+} = require('discord.js');
 const express = require('express');
 
 // Load .env when running with `node index.js` (Node 20+).
@@ -82,7 +89,20 @@ const slashCommands = [
     .setDescription('Envia a mensagem invertida')
     .addStringOption((opt) => opt.setName('mensagem').setDescription('Mensagem').setRequired(true))
     .setDMPermission(true),
-].map((command) => command.toJSON());
+  new SlashCommandBuilder()
+    .setName('oiduende')
+    .setDescription('Responde Oi')
+    .setDMPermission(true),
+].map((command) =>
+  command
+    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
+    .setContexts(
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel
+    )
+    .toJSON()
+);
 
 // ===================== BOT READY =====================
 client.once('clientReady', async () => {
@@ -107,6 +127,11 @@ client.on('interactionCreate', async (interaction) => {
 
     if (command === 'help') {
       await interaction.editReply(HELP_TEXT);
+      return;
+    }
+
+    if (command === 'oiduende') {
+      await interaction.editReply('Oi');
       return;
     }
 
