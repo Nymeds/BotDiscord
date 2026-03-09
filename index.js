@@ -1,6 +1,13 @@
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const express = require('express');
 
+// Load .env when running with `node index.js` (Node 20+).
+try {
+  process.loadEnvFile();
+} catch (_) {
+  // Ignore when .env does not exist (e.g. hosted env vars).
+}
+
 const app = express();
 app.use(express.json());
 
@@ -10,7 +17,6 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.GuildMembers,
   ],
   partials: [Partials.Channel, Partials.Message],
 });
@@ -23,7 +29,7 @@ const autoReplyConfig = new Map();
 const dmLoops = new Map();
 
 // ===================== BOT READY =====================
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   client.user.setActivity('Encher o saco dos amigos 😈', { type: 'PLAYING' });
 });
@@ -397,7 +403,14 @@ app.get('/ping', (req, res) => res.json({
 }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Servidor HTTP na porta ${PORT}`));
+const server = app.listen(PORT, () => console.log(`Servidor HTTP na porta ${PORT}`));
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`[HTTP] Porta ${PORT} ja esta em uso. Finalize o processo dessa porta ou defina PORT.`);
+    process.exit(1);
+  }
+  throw err;
+});
 
 // ===================== KEEP-ALIVE (anti-sleep Render) =====================
 if (process.env.RENDER_URL) {
@@ -414,4 +427,16 @@ if (process.env.RENDER_URL) {
 }
 
 // ===================== LOGIN =====================
-client.login(process.env.DISCORD_TOKEN);
+const token = (process.env.DISCORD_TOKEN || '').trim();
+if (!token) {
+  console.error('[Discord] DISCORD_TOKEN nao encontrado. Defina no .env ou nas variaveis de ambiente.');
+  process.exit(1);
+}
+if (token.split('.').length !== 3 || token.length < 50) {
+  console.error(`[Discord] DISCORD_TOKEN parece invalido/incompleto (len=${token.length}). Gere um novo token e atualize o .env.`);
+  process.exit(1);
+}
+client.login(token).catch((err) => {
+  console.error(`[Discord] Falha no login: ${err.code || err.message}`);
+  process.exit(1);
+});
