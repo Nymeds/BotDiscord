@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, SlashCommandBuilder } = require('discord.js');
 const express = require('express');
 
 // Load .env when running with `node index.js` (Node 20+).
@@ -28,10 +28,217 @@ const autoReplyConfig = new Map();
 // loops ativos: Map<userId, { interval, texto, intervalo }>
 const dmLoops = new Map();
 
+const HELP_TEXT = `
+😈 **Bot Troll — Comandos**
+Use com \`!\` (prefixo) ou \`/\` (slash command).
+
+**DM Loop**
+\`dmloop\`, \`dmstop\`, \`dmstopall\`, \`dmloops\`, \`dmspam\`, \`dmmisterioso\`, \`contato\`
+
+**Auto-Reply em DM**
+\`autoreply\`, \`autostop\`, \`autoreplies\`
+
+**Canal**
+\`spam\`, \`mencao\`, \`eco\`, \`reverse\`, \`oi\`, \`emoji\`, \`contagem\`, \`lento\`, \`copycat\`, \`caguetar\`
+`.trim();
+
+const slashCommands = [
+  new SlashCommandBuilder().setName('help').setDescription('Mostra a lista de comandos').setDMPermission(true),
+  new SlashCommandBuilder()
+    .setName('dmloop')
+    .setDescription('Inicia loop de DM para um usuario')
+    .addUserOption((opt) => opt.setName('usuario').setDescription('Usuario alvo').setRequired(true))
+    .addStringOption((opt) => opt.setName('mensagem').setDescription('Mensagem').setRequired(true))
+    .addIntegerOption((opt) =>
+      opt.setName('intervalo').setDescription('Intervalo em segundos (5-300)').setMinValue(5).setMaxValue(300)
+    )
+    .setDMPermission(true),
+  new SlashCommandBuilder()
+    .setName('dmstop')
+    .setDescription('Para o loop de DM de um usuario')
+    .addUserOption((opt) => opt.setName('usuario').setDescription('Usuario alvo').setRequired(true))
+    .setDMPermission(true),
+  new SlashCommandBuilder().setName('dmstopall').setDescription('Para todos os loops de DM').setDMPermission(true),
+  new SlashCommandBuilder().setName('dmloops').setDescription('Lista loops de DM ativos').setDMPermission(true),
+  new SlashCommandBuilder()
+    .setName('autoreply')
+    .setDescription('Ativa auto-reply para DMs de um usuario')
+    .addUserOption((opt) => opt.setName('usuario').setDescription('Usuario alvo').setRequired(true))
+    .addStringOption((opt) => opt.setName('resposta').setDescription('Resposta automatica').setRequired(true))
+    .setDMPermission(true),
+  new SlashCommandBuilder()
+    .setName('autostop')
+    .setDescription('Desativa auto-reply de um usuario')
+    .addUserOption((opt) => opt.setName('usuario').setDescription('Usuario alvo').setRequired(true))
+    .setDMPermission(true),
+  new SlashCommandBuilder().setName('autoreplies').setDescription('Lista auto-replies ativos').setDMPermission(true),
+  new SlashCommandBuilder()
+    .setName('eco')
+    .setDescription('Repete a mensagem')
+    .addStringOption((opt) => opt.setName('mensagem').setDescription('Mensagem').setRequired(true))
+    .setDMPermission(true),
+  new SlashCommandBuilder()
+    .setName('reverse')
+    .setDescription('Envia a mensagem invertida')
+    .addStringOption((opt) => opt.setName('mensagem').setDescription('Mensagem').setRequired(true))
+    .setDMPermission(true),
+].map((command) => command.toJSON());
+
 // ===================== BOT READY =====================
-client.once('clientReady', () => {
-  console.log(`✅ Bot online como ${client.user.tag}`);
-  client.user.setActivity('Encher o saco dos amigos 😈', { type: 'PLAYING' });
+client.once('clientReady', async () => {
+  console.log(`? Bot online como ${client.user.tag}`);
+  client.user.setActivity('Encher o saco dos amigos ??', { type: 'PLAYING' });
+  try {
+    await client.application.commands.set(slashCommands);
+    console.log(`[Slash] ${slashCommands.length} comando(s) "/" registrado(s) globalmente.`);
+  } catch (err) {
+    console.error(`[Slash] Erro ao registrar comandos: ${err.message}`);
+  }
+});
+
+// ===================== SLASH COMMANDS =====================
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const command = interaction.commandName;
+
+  try {
+    await interaction.deferReply();
+
+    if (command === 'help') {
+      await interaction.editReply(HELP_TEXT);
+      return;
+    }
+
+    if (command === 'dmloop') {
+      const alvo = interaction.options.getUser('usuario', true);
+      const texto = interaction.options.getString('mensagem', true);
+      const intervalo = interaction.options.getInteger('intervalo') ?? 10;
+
+      if (dmLoops.has(alvo.id)) {
+        await interaction.editReply(`Ja tem loop ativo pra ${alvo.username}. Use /dmstop primeiro.`);
+        return;
+      }
+
+      let interval = null;
+      const sendDM = async () => {
+        try {
+          const dm = await alvo.createDM();
+          await dm.send(texto);
+          return true;
+        } catch (err) {
+          console.error(`[DMLoop] Erro: ${err.message}`);
+          if (interval) clearInterval(interval);
+          dmLoops.delete(alvo.id);
+          return false;
+        }
+      };
+
+      const firstSendOk = await sendDM();
+      if (!firstSendOk) {
+        await interaction.editReply(`Nao consegui abrir DM com ${alvo.username}.`);
+        return;
+      }
+
+      interval = setInterval(sendDM, intervalo * 1000);
+      dmLoops.set(alvo.id, { interval, texto, intervalo });
+      await interaction.editReply(`Loop iniciado! "${texto}" pra ${alvo.username} a cada ${intervalo}s.`);
+      return;
+    }
+
+    if (command === 'dmstop') {
+      const alvo = interaction.options.getUser('usuario', true);
+      if (!dmLoops.has(alvo.id)) {
+        await interaction.editReply(`Sem loop ativo pra ${alvo.username}.`);
+        return;
+      }
+      clearInterval(dmLoops.get(alvo.id).interval);
+      dmLoops.delete(alvo.id);
+      await interaction.editReply(`Loop parado pra ${alvo.username}.`);
+      return;
+    }
+
+    if (command === 'dmstopall') {
+      if (dmLoops.size === 0) {
+        await interaction.editReply('Nenhum loop ativo no momento.');
+        return;
+      }
+      for (const [, { interval }] of dmLoops) clearInterval(interval);
+      const total = dmLoops.size;
+      dmLoops.clear();
+      await interaction.editReply(`${total} loop(s) parado(s).`);
+      return;
+    }
+
+    if (command === 'dmloops') {
+      if (dmLoops.size === 0) {
+        await interaction.editReply('Nenhum loop ativo no momento.');
+        return;
+      }
+      let lista = '**Loops ativos:**\n';
+      for (const [userId, config] of dmLoops) {
+        const user = await client.users.fetch(userId).catch(() => null);
+        lista += `- ${user ? user.username : userId}: "${config.texto}" a cada ${config.intervalo}s\n`;
+      }
+      await interaction.editReply(lista);
+      return;
+    }
+
+    if (command === 'autoreply') {
+      const alvo = interaction.options.getUser('usuario', true);
+      const resposta = interaction.options.getString('resposta', true);
+      autoReplyConfig.set(alvo.id, { ativo: true, resposta });
+      await interaction.editReply(`Auto-reply ativado pra ${alvo.username}.`);
+      return;
+    }
+
+    if (command === 'autostop') {
+      const alvo = interaction.options.getUser('usuario', true);
+      if (!autoReplyConfig.has(alvo.id)) {
+        await interaction.editReply(`Sem auto-reply ativo pra ${alvo.username}.`);
+        return;
+      }
+      autoReplyConfig.delete(alvo.id);
+      await interaction.editReply(`Auto-reply desativado pra ${alvo.username}.`);
+      return;
+    }
+
+    if (command === 'autoreplies') {
+      if (autoReplyConfig.size === 0) {
+        await interaction.editReply('Nenhum auto-reply ativo.');
+        return;
+      }
+      let lista = '**Auto-replies ativos:**\n';
+      for (const [userId, config] of autoReplyConfig) {
+        const user = await client.users.fetch(userId).catch(() => null);
+        lista += `- ${user ? user.username : userId}: "${config.resposta}"\n`;
+      }
+      await interaction.editReply(lista);
+      return;
+    }
+
+    if (command === 'eco') {
+      const texto = interaction.options.getString('mensagem', true);
+      await interaction.editReply(texto);
+      return;
+    }
+
+    if (command === 'reverse') {
+      const texto = interaction.options.getString('mensagem', true);
+      await interaction.editReply(texto.split('').reverse().join(''));
+      return;
+    }
+
+    await interaction.editReply('Esse /comando ainda nao foi mapeado no handler. Use !comando por enquanto.');
+  } catch (err) {
+    console.error(`[Slash] Erro no comando /${command}:`, err);
+    const msg = 'Erro ao executar comando.';
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(msg).catch(() => {});
+    } else {
+      await interaction.reply({ content: msg, ephemeral: true }).catch(() => {});
+    }
+  }
 });
 
 // ===================== HANDLER PRINCIPAL =====================
@@ -40,11 +247,11 @@ client.on('messageCreate', async (message) => {
 
   const isDM = message.channel.type === 1; // 1 = DM channel
 
-  // ── AUTO-REPLY: intercepta DMs de alvos configurados ─────────────────────
+  // AUTO-REPLY: intercepta DMs de alvos configurados
   if (isDM) {
     const config = autoReplyConfig.get(message.author.id);
     if (config && config.ativo) {
-      await sleep(500 + Math.random() * 1000); // delay humano aleatório
+      await sleep(500 + Math.random() * 1000);
       await message.reply(config.resposta);
       return;
     }
@@ -56,11 +263,7 @@ client.on('messageCreate', async (message) => {
   const args = message.content.slice(prefix.length).trim().split(/ +/);
   const command = args.shift().toLowerCase();
 
-  // ==========================================================================
-  // COMANDOS DE DM
-  // ==========================================================================
-
-  // ── !dmloop @user <mensagem> <intervalo_segundos> ──────────────────────────
+  // !dmloop @user <mensagem> <intervalo_segundos>
   if (command === 'dmloop') {
     const alvo = message.mentions.users.first();
     const intervalo = parseInt(args[args.length - 1]) || 10;
@@ -73,20 +276,24 @@ client.on('messageCreate', async (message) => {
 
     await message.reply(`🔁 Loop iniciado! Mandando *"${texto}"* pra ${alvo.username} a cada ${intervalo}s.\nUse \`!dmstop @${alvo.username}\` pra parar.`);
 
+    let interval = null;
     const sendDM = async () => {
       try {
         const dm = await alvo.createDM();
         await dm.send(texto);
-        console.log(`[DMLoop] "${texto}" → ${alvo.username}`);
+        console.log(`[DMLoop] "${texto}" -> ${alvo.username}`);
+        return true;
       } catch (err) {
         console.error(`[DMLoop] Erro: ${err.message}`);
-        clearInterval(interval);
+        if (interval) clearInterval(interval);
         dmLoops.delete(alvo.id);
+        return false;
       }
     };
 
-    await sendDM();
-    const interval = setInterval(sendDM, intervalo * 1000);
+    const firstSendOk = await sendDM();
+    if (!firstSendOk) return message.reply(`❌ Nao consegui abrir DM com ${alvo.username}.`);
+    interval = setInterval(sendDM, intervalo * 1000);
     dmLoops.set(alvo.id, { interval, texto, intervalo });
   }
 
@@ -356,35 +563,7 @@ client.on('messageCreate', async (message) => {
 
   // ── !help ─────────────────────────────────────────────────────────────────
   if (command === 'help' || command === 'ajuda') {
-    await message.reply(`
-😈 **Bot Troll — Todos os Comandos** 😈
-
-**📨 DM Loop**
-\`!dmloop @user <msg> <seg>\` — Loop infinito de DMs (mínimo 5s)
-\`!dmstop @user\` — Para o loop de alguém
-\`!dmstopall\` — Para TODOS os loops
-\`!dmloops\` — Lista loops ativos
-\`!dmspam @user <1-20> <msg>\` — Rafaga de DMs
-\`!dmmisterioso @user <msg>\` — DM com "digitando..." antes (parece humano)
-\`!contato @user <msg>\` — DM silenciosa sem avisar no canal
-
-**🤖 Auto-Reply em DM**
-\`!autoreply @user <resposta>\` — Responde toda DM que ele mandar pro bot
-\`!autostop @user\` — Para o auto-reply de alguém
-\`!autoreplies\` — Lista auto-replies ativos
-
-**📢 Canal**
-\`!spam <1-50> <msg>\` — Manda X vezes no canal
-\`!mencao @user <1-20>\` — Menciona X vezes
-\`!eco <msg>\` — Mensagem anônima
-\`!reverse <msg>\` — Mensagem ao contrário
-\`!oi @user <1-15>\` — Manda "oi" por DM
-\`!emoji <emoji> <1-30>\` — Enche de emoji
-\`!contagem <1-10> <msg>\` — Contagem regressiva dramática
-\`!lento @user <msg> <vezes> <seg>\` — Assombra lentamente
-\`!copycat @user <vezes>\` — Repete tudo que a pessoa falar
-\`!caguetar @user\` — Expõe última mensagem
-    `);
+    await message.reply(HELP_TEXT);
   }
 });
 
