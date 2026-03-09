@@ -56,6 +56,10 @@ const slashCommands = [
     .setName('mimic')
     .setDescription('Repete tudo que as outras pessoas falarem neste chat')
     .setDMPermission(true),
+  new SlashCommandBuilder()
+    .setName('oiduende')
+    .setDescription('Responde Oi')
+    .setDMPermission(true),
 ].map((command) =>
   command
     .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
@@ -129,12 +133,31 @@ client.on('interactionCreate', async (interaction) => {
 
       clearLoop(channelId);
 
+      const sendLoopMessage = async () => {
+        const content = text.slice(0, 2000);
+        try {
+          if (canSend(channel)) {
+            await channel.send(content);
+            return;
+          }
+        } catch (err) {
+          console.error(`[fala] channel.send falhou no canal ${channelId}: ${err.message}`);
+        }
+
+        if (interaction.webhook && typeof interaction.webhook.send === 'function') {
+          await interaction.webhook.send({ content });
+          return;
+        }
+
+        throw new Error('Sem canal/webhook para enviar mensagem do loop.');
+      };
+
       let sending = false;
       const timer = setInterval(async () => {
         if (sending) return;
         sending = true;
         try {
-          await channel.send(text.slice(0, 2000));
+          await sendLoopMessage();
         } catch (err) {
           console.error(`[fala] Erro no canal ${channelId}: ${err.message}`);
           clearLoop(channelId);
@@ -145,6 +168,11 @@ client.on('interactionCreate', async (interaction) => {
 
       activeLoops.set(channelId, { timer, text, intervalSec });
       await interaction.reply(`Loop iniciado. Mensagem a cada ${intervalSec}s. Use /pare para parar.`);
+      return;
+    }
+
+    if (command === 'oiduende') {
+      await interaction.reply('Oi');
       return;
     }
 
