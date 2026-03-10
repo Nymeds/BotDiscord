@@ -23,12 +23,12 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.MessageContent, // OBRIGATÓRIO: habilitar no Discord Developer Portal também
   ],
   partials: [Partials.Channel, Partials.Message],
 });
 
-// channelId -> { timer, text, intervalSec }
+// channelId -> { timer, text, intervalSec, channelId }
 const activeLoops = new Map();
 // channelIds where mimic is enabled
 const mimicChannels = new Set();
@@ -89,6 +89,15 @@ function stopChannelFeatures(channelId) {
   return { hadLoop, hadMimic };
 }
 
+// Busca o canal pelo cache ou via fetch — evita referência stale
+async function resolveChannel(channelId) {
+  try {
+    return client.channels.cache.get(channelId) || await client.channels.fetch(channelId);
+  } catch {
+    return null;
+  }
+}
+
 client.once('clientReady', async () => {
   console.log(`Bot online como ${client.user.tag}`);
   client.user.setActivity('Slash commands', { type: 'PLAYING' });
@@ -131,38 +140,36 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      // Para loop anterior se houver
       clearLoop(channelId);
 
-      const sendLoopMessage = async () => {
-        const content = text.slice(0, 2000);
-        try {
-          if (canSend(channel)) {
-            await channel.send(content);
-            return;
-          }
-        } catch (err) {
-          console.error(`[fala] channel.send falhou no canal ${channelId}: ${err.message}`);
-        }
+      let errorCount = 0;
+      const MAX_ERRORS = 3; // Só cancela após 3 erros consecutivos, não no primeiro
 
-        if (interaction.webhook && typeof interaction.webhook.send === 'function') {
-          await interaction.webhook.send({ content });
+      const timer = setInterval(async () => {
+        // Busca canal fresco a cada tick — evita referência stale
+        const ch = await resolveChannel(channelId);
+
+        if (!canSend(ch)) {
+          errorCount++;
+          console.error(`[fala] Canal ${channelId} inacessivel (tentativa ${errorCount}/${MAX_ERRORS})`);
+          if (errorCount >= MAX_ERRORS) {
+            console.error(`[fala] Cancelando loop do canal ${channelId} após ${MAX_ERRORS} falhas.`);
+            clearLoop(channelId);
+          }
           return;
         }
 
-        throw new Error('Sem canal/webhook para enviar mensagem do loop.');
-      };
-
-      let sending = false;
-      const timer = setInterval(async () => {
-        if (sending) return;
-        sending = true;
         try {
-          await sendLoopMessage();
+          await ch.send(text.slice(0, 2000));
+          errorCount = 0; // Reset ao ter sucesso
         } catch (err) {
-          console.error(`[fala] Erro no canal ${channelId}: ${err.message}`);
-          clearLoop(channelId);
-        } finally {
-          sending = false;
+          errorCount++;
+          console.error(`[fala] Erro ao enviar no canal ${channelId} (tentativa ${errorCount}/${MAX_ERRORS}): ${err.message}`);
+          if (errorCount >= MAX_ERRORS) {
+            console.error(`[fala] Cancelando loop do canal ${channelId} após ${MAX_ERRORS} falhas.`);
+            clearLoop(channelId);
+          }
         }
       }, intervalSec * 1000);
 
@@ -207,18 +214,30 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Mimic works in guild channels and DMs with the bot
+// Mimic — funciona em servidores e DMs
 client.on('messageCreate', async (message) => {
+  // Ignora mensagens do próprio bot
   if (message.author.bot) return;
-  if (!mimicChannels.has(message.channelId)) return;
+
+  // Usa channelId com fallback para channel.id
+  const channelId = message.channelId ?? message.channel?.id;
+  if (!channelId) return;
+
+  if (!mimicChannels.has(channelId)) return;
 
   const content = (message.content || '').trim();
   if (!content) return;
 
   try {
-    await message.channel.send(content.slice(0, 2000));
+    // Garante que o canal está acessível antes de enviar
+    const ch = message.channel ?? await resolveChannel(channelId);
+    if (!canSend(ch)) {
+      console.error(`[mimic] Canal ${channelId} inacessivel.`);
+      return;
+    }
+    await ch.send(content.slice(0, 2000));
   } catch (err) {
-    console.error(`[mimic] Erro no canal ${message.channelId}: ${err.message}`);
+    console.error(`[mimic] Erro no canal ${channelId}: ${err.message}`);
   }
 });
 
