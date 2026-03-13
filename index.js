@@ -1,5 +1,11 @@
 ﻿require("dotenv").config();
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection:", reason);
+});
 
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+});
 const {
   Client,
   GatewayIntentBits,
@@ -26,7 +32,13 @@ const client = new Client({
   ],
   partials: [Partials.Channel],
 });
+client.on("error", (err) => {
+  console.error("Discord client error:", err);
+});
 
+client.on("shardError", (err) => {
+  console.error("Shard error:", err);
+});
 const MAX_BURST = 5;
 const MAX_FOLLOWUPS = 5;
 const MAX_MESSAGES_PER_INTERACTION = 1 + MAX_FOLLOWUPS;
@@ -135,10 +147,17 @@ async function sendFollowups(
     try {
       await interaction.followUp(truncate(message));
       sent += 1;
-    } catch (err) {
-      console.log("FollowUp erro:", err.message);
-      break;
-    }
+    }catch (err) {
+  console.error("Erro Gemini:", err);
+
+  const msg = truncate(err?.message || "Erro desconhecido", 1800);
+
+  try {
+    await interaction.editReply(`Falha ao chamar a IA:\n${msg}`);
+  } catch (e) {
+    console.error("Falha ao responder interaction:", e);
+  }
+}
   }
 }
 
@@ -179,25 +198,32 @@ function extractImageFromParts(parts) {
 async function geminiGenerate({ apiKey, prompt, type }) {
   const model = type === "imagem" ? GEMINI_IMAGE_MODEL : GEMINI_TEXT_MODEL;
   const url = `${GEMINI_API_BASE}/${model}:generateContent`;
-  const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-  };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": apiKey,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini erro ${res.status}: ${errText}`);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Gemini ${res.status}`);
+    }
+
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return res.json();
 }
 
 async function handleGeminiInteraction(interaction, prompt, type) {
@@ -267,7 +293,7 @@ async function handleGeminiInteraction(interaction, prompt, type) {
   }
 }
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log("Bot online:", client.user.tag);
 
   const commands = [
@@ -409,7 +435,8 @@ client.once("ready", async () => {
   await client.application.commands.set(commands);
 });
 
-client.on("interactionCreate", async (interaction) => {
+client.on("interactionCreate", async (interaction) => {try
+{
   if (!interaction.isChatInputCommand()) return;
 
   const command = interaction.commandName;
@@ -548,6 +575,19 @@ client.on("interactionCreate", async (interaction) => {
 
   if (command === "oi") {
     await interaction.reply("Oi 👋");
+  }
+  } catch (err) {
+    console.error("Erro na interaction:", err);
+
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp("O duende tropeçou em algo aqui.");
+      } else {
+        await interaction.reply("O duende tropeçou em algo aqui.");
+      }
+    } catch (e) {
+      console.error("Erro ao enviar fallback:", e);
+    }
   }
 });
 
