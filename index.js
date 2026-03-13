@@ -294,7 +294,7 @@ async function handleGeminiInteraction(interaction, prompt, type) {
   }
 }
 
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   console.log("Bot online:", client.user.tag);
 
   const commands = [
