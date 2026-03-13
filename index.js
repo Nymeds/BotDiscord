@@ -18,7 +18,9 @@ const {
 } = require("discord-api-types/v10");
 
 const express = require("express");
-
+client.on("interactionCreate", async (interaction) => {
+  console.log("Interaction recebida:", interaction.commandName);
+});
 const app = express();
 app.get("/", (req, res) => res.send("Bot online"));
 
