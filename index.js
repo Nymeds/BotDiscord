@@ -18,9 +18,6 @@ const {
 } = require("discord-api-types/v10");
 
 const express = require("express");
-client.on("interactionCreate", async (interaction) => {
-  console.log("Interaction recebida:", interaction.commandName);
-});
 const app = express();
 app.get("/", (req, res) => res.send("Bot online"));
 
@@ -37,7 +34,9 @@ const client = new Client({
 client.on("error", (err) => {
   console.error("Discord client error:", err);
 });
-
+client.on("interactionCreate", async (interaction) => {
+  console.log("Interaction recebida:", interaction.commandName);
+});
 client.on("shardError", (err) => {
   console.error("Shard error:", err);
 });
